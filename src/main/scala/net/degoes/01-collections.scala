@@ -29,6 +29,7 @@ package net.degoes.collections
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
 import java.util.concurrent.TimeUnit
+import zio.Chunk
 
 /**
  * EXERCISE 1
@@ -55,14 +56,33 @@ class ElementPrependBenchmark {
   var size: Int = _
 
   var startList: List[String] = _
+  var startVector: Vector[String] = _
+  var startArray: Array[String] = _
+  var startChunk: Chunk[String] = _
 
   @Setup(Level.Trial)
-  def setup(): Unit =
+  def setup(): Unit = {
     startList = List.fill(size)("a")
+    startVector = Vector.fill(size)("a")
+    startArray = Array.fill(size)("a")
+    startChunk = Chunk.fill(size)("a")
+  }
 
   @Benchmark
   def list(blackhole: Blackhole): Unit =
     blackhole.consume("a" :: startList)
+
+  @Benchmark
+  def vector(blackhole: Blackhole): Unit =
+    blackhole.consume("a" +: startVector)
+
+  @Benchmark
+  def array(blackhole: Blackhole): Unit =
+    blackhole.consume("a" +: startArray)
+
+  @Benchmark
+  def chunk(blackhole: Blackhole): Unit =
+    blackhole.consume("a" +: startChunk)
 }
 
 /**
@@ -79,11 +99,37 @@ class ElementPrependBenchmark {
 @Fork(1)
 @Threads(1)
 class ConcatBenchmark {
+  @Param(Array("1000", "10000", "100000"))
+  var size: Int = _
+
+  var startList: List[String] = _
+  var startVector: Vector[String] = _
+  var startArray: Array[String] = _
+  var startChunk: Chunk[String] = _
+
   @Setup(Level.Trial)
-  def setup(): Unit = ()
+  def setup(): Unit = {
+    startList = List.fill(size)("a")
+    startVector = Vector.fill(size)("a")
+    startArray = Array.fill(size)("a")
+    startChunk = Chunk.fill(size)("a")
+  }
 
   @Benchmark
-  def list(blackhole: Blackhole): Unit = ()
+  def list(blackhole: Blackhole): Unit =
+    blackhole.consume(startList ++ startList)
+
+  @Benchmark
+  def vector(blackhole: Blackhole): Unit =
+    blackhole.consume(startVector ++ startVector)
+
+  @Benchmark
+  def array(blackhole: Blackhole): Unit =
+    blackhole.consume(startArray ++ startArray)
+
+  @Benchmark
+  def chunk(blackhole: Blackhole): Unit =
+    blackhole.consume(startChunk ++ startChunk)
 }
 
 /**
@@ -100,11 +146,50 @@ class ConcatBenchmark {
 @Fork(1)
 @Threads(1)
 class RandomAccessBenchmark {
+  @Param(Array("1000", "10000", "100000"))
+  var size: Int = _
+  
+  var indexMid: Int = _
+  var indexEnd: Int = _
+
+  var startList: List[String] = _
+  var startVector: Vector[String] = _
+  var startArray: Array[String] = _
+  var startChunk: Chunk[String] = _
+
   @Setup(Level.Trial)
-  def setup(): Unit = ()
+  def setup(): Unit = {
+    startList = List.fill(size)("a")
+    startVector = Vector.fill(size)("a")
+    startArray = Array.fill(size)("a")
+    startChunk = Chunk.fill(size)("a")
+    indexMid = size / 2
+    indexEnd = size - 1
+  }
 
   @Benchmark
-  def list(blackhole: Blackhole): Unit = ()
+  def list(blackhole: Blackhole): Unit = {
+    blackhole.consume(startList(indexMid))
+    blackhole.consume(startList(indexEnd))
+  }
+
+  @Benchmark
+  def vector(blackhole: Blackhole): Unit ={
+    blackhole.consume(startVector(indexMid))
+    blackhole.consume(startVector(indexEnd))
+  }
+
+  @Benchmark
+  def array(blackhole: Blackhole): Unit ={
+    blackhole.consume(startArray(indexMid))
+    blackhole.consume(startArray(indexEnd))
+  }
+   
+  @Benchmark
+  def chunk(blackhole: Blackhole): Unit ={
+    blackhole.consume(startChunk(indexMid))
+    blackhole.consume(startChunk(indexEnd))
+  }
 }
 
 /**
@@ -126,11 +211,53 @@ class RandomAccessBenchmark {
 @Fork(1)
 @Threads(1)
 class IterationBenchmark {
+  @Param(Array("1000", "10000", "100000"))
+  var size: Int = _
+  
+  var startList: List[Int] = _
+  var startVector: Vector[Int] = _
+  var startArray: Array[Int] = _
+  var startChunk: Chunk[Int] = _
+
   @Setup(Level.Trial)
-  def setup(): Unit = ()
+  def setup(): Unit = {
+    startList = List.fill(size)(0)
+    startVector = Vector.fill(size)(0)
+    startArray = Array.fill(size)(0)
+    startChunk = Chunk.fill(size)(0)
+  }
 
   @Benchmark
-  def list(blackhole: Blackhole): Unit = ()
+  def list(blackhole: Blackhole): Unit = {
+    startList.foreach(blackhole.consume(_))
+  }
+
+  @Benchmark
+  def vector(blackhole: Blackhole): Unit ={
+    var i = 0
+    while (i < size) {
+      blackhole.consume(startVector(i))
+      i = i + 1
+    }
+  }
+
+  @Benchmark
+  def array(blackhole: Blackhole): Unit ={
+    var i = 0
+    while (i < size) {
+      blackhole.consume(startArray(i))
+      i = i + 1
+    }
+  }
+   
+  @Benchmark
+  def chunk(blackhole: Blackhole): Unit ={
+    var i = 0
+    while (i < size) {
+      blackhole.consume(startChunk(i))
+      i = i + 1
+    }
+  }
 }
 
 /**
@@ -193,12 +320,17 @@ class GraduationBenchmark {
     blackhole.consume(c)
   }
 
-  case class Chain[+A]() {
-    def ++[A1 >: A](that: Chain[A1]): Chain[A1] = Chain.empty // TODO
+  sealed trait Chain[+A] {
+    def ++[A1 >: A](that: Chain[A1]): Chain[A1] = new Chain.Concat(this, that)
   }
   object Chain           {
-    def empty: Chain[Nothing] = Chain()
+    def empty: Chain[Nothing] = Empty
 
-    def apply[A](as: A*): Chain[A] = Chain() // TODO
+    def apply[A](as: A*): Chain[A] = Some(as.toVector)
+
+
+    case object Empty extends Chain[Nothing]
+    case class Some[+A](xs: Vector[A]) extends Chain[A]
+    case class Concat[+A](xs: Chain[A], ys: Chain[A]) extends Chain[A]
   }
 }

@@ -138,6 +138,15 @@ class Estimation2Benchmark {
     sum
   }
 
+  @Benchmark
+  def add3(blackhole: Blackhole): Unit = {
+    val plus: java.util.function.IntBinaryOperator = _ + _
+
+    val sum = list.map(plus.applyAsInt(1, _)).sum
+
+    blackhole.consume(sum)
+  }
+
   trait Adder[A] {
     def add(left: A, right: A): A
   }
@@ -180,7 +189,7 @@ class Estimation3Benchmark {
     def isInt(s: String): Boolean =
       try {
         s.toInt
-        false
+        true
       } catch {
         case _: NumberFormatException => false
       }

@@ -39,8 +39,12 @@ class AllocBenchmark {
   @Param(Array("100", "1000", "10000"))
   var size: Int = _
 
+  var pre: Array[AnyRef] = _
+
   @Setup
-  def setup(): Unit = {}
+  def setup(): Unit = {
+    pre = Array.fill(size)(new {})
+  }
 
   @Benchmark
   def alloc(blackhole: Blackhole): Unit = {
@@ -54,7 +58,16 @@ class AllocBenchmark {
   }
 
   @Benchmark
-  def noAlloc(blackhole: Blackhole): Unit = ()
+  def noAlloc(blackhole: Blackhole): Unit = {
+    var sum = 0
+    var i   = 0
+    while (i < size) {
+      sum = sum + pre(i).hashCode()
+      i = i + 1
+    }
+    blackhole.consume(sum)
+  }
+
 }
 
 /**
@@ -84,6 +97,10 @@ class CopyAllocBenchmark {
   def alloc(): Unit =
     people.map(p => p.copy(age = p.age + 1))
 
+  @Benchmark
+  def noAlloc(): Unit =
+    people.foreach(p => p.age = p.age + 1)
+
   case class Person(var age: Int)
 }
 
@@ -99,7 +116,7 @@ class CopyAllocBenchmark {
  * the heap twice. In the first iteration, mark all objects that are reachable from the root object.
  * In the second iteration, sweep all objects that are not marked.
  */
-@State(Scope.Thread)
+@State(Scope.Benchmark)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @BenchmarkMode(Array(Mode.Throughput))
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
@@ -115,7 +132,7 @@ class MarkSweepBenchmark {
   var size: Int = _
 
   var heap: Heap              = _
-  var rootObjects: Array[Obj] = _
+  var root: Array[Obj] = _
 
   @Setup
   def setup(): Unit = {
@@ -138,11 +155,41 @@ class MarkSweepBenchmark {
       i = i + 1
     }
 
-    rootObjects = objects.take(10)
+    root = objects.take(10)
   }
 
   @Benchmark
-  def markSweep(blackhole: Blackhole): Unit = ()
+  def markSweep(blackhole: Blackhole): Unit = {
+    def mark(o: Obj): Unit = 
+      if (o == null) ()
+      else if (o.marked) ()
+      else {
+        o.marked = true
+        var i = 0
+        val l = o.data.size
+        while (i < l) {
+          o.data(i) match {
+            case Data.Integer(_) => ()
+            case Data.Pointer(o) => mark(o)
+          }
+          i = i + 1
+        }
+      }
+
+    root.foreach(mark)
+
+    var i = 0
+    val l = heap.objects.size
+    while (i < l) {
+      val o = heap.objects(i)
+      if (o != null && o.marked)
+        ()
+      else
+        heap.objects(i) = null
+
+      i = i + 1
+    }
+  }
 
   sealed trait Data
   object Data {

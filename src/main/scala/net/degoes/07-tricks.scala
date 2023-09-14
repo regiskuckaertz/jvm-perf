@@ -18,7 +18,7 @@ import scala.util.control.NoStackTrace
 /**
  * EXERCISE 1
  *
- * Because the JVM supports null values, you can use the null value as an extra "sentinal" value,
+ * Because the JVM supports null values, you can use the null value as an extra "sentinel" value,
  * rather than using a wrapper data structure to propagate the same information. This can reduce
  * allocation and indirection and improve performance.
  *
@@ -37,12 +37,12 @@ class UseNullBenchmark {
   @Param(Array("10000", "1000000"))
   var size: Int = _
 
-  sealed trait Optional[+A] {
-    final def orElse[B >: A](that: => Optional[B]): Optional[B] =
+  sealed abstract class Optional[+A] {
+    @inline final def orElse[B >: A](that: => Optional[B]): Optional[B] =
       if (this == Optional.None) that else this
   }
   object Optional           {
-    case class Some[A](value: A) extends Optional[A]
+    final case class Some[A](value: A) extends Optional[A]
     case object None             extends Optional[Nothing]
   }
 
@@ -60,7 +60,17 @@ class UseNullBenchmark {
   }
 
   @Benchmark
-  def nulls(blackhole: Blackhole): Unit = ()
+  def nulls(blackhole: Blackhole): Unit = {
+    var i               = 0
+    var current: String = "a"
+    val cutoff          = size - 10
+    while (i < size) {
+      if (i > cutoff) current = null
+      else current = if (current eq null) "a" else current
+      i = i + 1
+    }
+    blackhole.consume(current)
+  }
 }
 
 /**
@@ -88,10 +98,13 @@ class UseArraysBenchmark {
   var size: Int = _
 
   var list: List[Float] = _
+  var array: Array[Float] = _
 
   @Setup
-  def setup(): Unit =
+  def setup(): Unit = {
     list = List.fill(size)(rng.nextFloat)
+    array = Array.fill(size)(rng.nextFloat)
+  }
 
   @Benchmark
   def list(blackhole: Blackhole): Unit = {
@@ -114,7 +127,22 @@ class UseArraysBenchmark {
   }
 
   @Benchmark
-  def array(blackhole: Blackhole): Unit = ()
+  def array(blackhole: Blackhole): Unit = {
+    var i = 0
+    var size = array.length
+    var res = Array.ofDim[Float](size)
+    var x1          = array(0)
+    var x2          = array(0)
+    while (i < size) {
+      val x3 = array(i)
+      
+      res(i) = (x1 + x2 + x3) / 3
+
+      i = i + 1
+      x1 = x2
+      x2 = x3
+    }
+  }
 }
 
 /**
@@ -142,6 +170,14 @@ class NoAllocationBenchmark {
   private val rng = new scala.util.Random(0L)
 
   val users: Array[String] = Array.fill(1000)(rng.nextString(10))
+
+  val map: collection.mutable.HashMap[UserId, MMetrics] = {
+    val m = collection.mutable.HashMap.empty[UserId, MMetrics]
+    (0 until 1000).foreach { i =>
+      m.put(users(i), MMetrics.empty)
+    }
+    m
+  }
 
   @Param(Array("1000", "10000"))
   var size: Int = _
@@ -174,7 +210,20 @@ class NoAllocationBenchmark {
   }
 
   @Benchmark
-  def mutable(blackhole: Blackhole): Unit = ()
+  def mutable(blackhole: Blackhole): Unit = {
+    var i       = 0
+    while (i < size) {
+      events(i) match {
+        case Event.AdView(userId) =>
+          map(userId).adViews += 1
+        case Event.AdClick(userId)      =>
+          map(userId).adClicks += 1
+        case Event.AdConversion(userId) =>
+          map(userId).adConversions += 1
+      }
+      i = i + 1
+    }
+  }
 
   type UserId = String
 
@@ -185,6 +234,15 @@ class NoAllocationBenchmark {
         adClicks = this.adClicks + that.adClicks,
         adConversions = this.adConversions + that.adConversions
       )
+  }
+
+  case class MMetrics(var adViews: Int, var adClicks: Int, var adConversions: Int) {
+    def toMetrics: Metrics =
+      Metrics(adViews, adClicks, adConversions)
+  }
+
+  object MMetrics {
+    def empty = MMetrics(0, 0, 0)
   }
 
   case class MetricsMap(map: Map[UserId, Metrics]) { self =>
@@ -248,6 +306,8 @@ class SpecializeBenchmark {
 
   var genericTree: GenericTree[Int] = _
 
+  var intTree: IntTree = _
+
   @Setup
   def setupGenericTree(): Unit = {
     val count = Math.sqrt(size).toInt
@@ -262,6 +322,22 @@ class SpecializeBenchmark {
     }
 
     genericTree = current
+  }
+
+  @Setup
+  def setupIntTree(): Unit = {
+    val count = Math.sqrt(size).toInt
+
+    var current =
+      IntTree.Branch(Array.fill(count)(IntTree.Leaf(0)))
+
+    var i = 0
+    while (i < count) {
+      current = IntTree.Branch(Array(current))
+      i = i + 1
+    }
+
+    intTree = current
   }
 
   @Benchmark
@@ -285,12 +361,35 @@ class SpecializeBenchmark {
   }
 
   @Benchmark
-  def intTree(blackhole: Blackhole): Unit = ()
+  def intTree(blackhole: Blackhole): Unit = {
+    def loop(tree: IntTree): Int =
+      if (tree.isInstanceOf[IntTree.Leaf]) {
+        tree.asInstanceOf[IntTree.Leaf].value
+      } else {
+        val children = tree.asInstanceOf[IntTree.Branch].children
+
+        var sum = 0
+        var i   = 0
+        while (i < children.length) {
+          sum = sum + loop(children(i))
+          i = i + 1
+        }
+        sum
+      }
+
+    blackhole.consume(loop(intTree))
+  }
 
   sealed trait GenericTree[A]
   object GenericTree {
     case class Leaf[A](value: A)                        extends GenericTree[A]
     case class Branch[A](children: Seq[GenericTree[A]]) extends GenericTree[A]
+  }
+
+  sealed trait IntTree
+  object IntTree {
+    case class Leaf(value: Int) extends IntTree
+    case class Branch(children: Array[IntTree]) extends IntTree
   }
 }
 
