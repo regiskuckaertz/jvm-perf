@@ -1,3 +1,4 @@
+-J--add-modules=jdk.incubator.vector
 # -J-XX:+PrintFlagsFinal
 # -J-XX:-DoEscapeAnalysis
 # -J-XX:-Inline
